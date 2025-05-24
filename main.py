@@ -39,3 +39,7 @@ async def home(request: Request):
         request.session["session_id"] = str(uuid4())
     request.session.setdefault("uploaded_files", [])
     return templates.TemplateResponse("index.html", {"request": request})
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
