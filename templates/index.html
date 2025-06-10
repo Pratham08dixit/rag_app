@@ -9,18 +9,42 @@
 
   <!-- Header -->
   <header class="bg-white shadow p-6">
-    <h1 class="text-3xl font-bold text-center text-indigo-600">RAG App</h1>
+    <h1 class="text-3xl font-bold text-center text-indigo-600">RAG App — Document Q&A</h1>
   </header>
 
   <div class="flex flex-1 max-w-6xl mx-auto mt-8 gap-6">
 
     <!-- Sidebar -->
-    <aside class="w-1/4 bg-white p-4 shadow rounded-lg">
+    <aside class="w-1/4 bg-white p-4 shadow rounded-lg flex flex-col">
       <!-- Uploaded Files -->
-      <section>
-        <h2 class="text-lg font-semibold mb-2">Uploaded Files</h2>
-        <ul id="file-list" class="space-y-1 text-sm text-gray-700 max-h-64 overflow-y-auto">
-          <!-- Populated dynamically -->
+      <section class="mb-6">
+        <div class="flex justify-between items-center mb-2">
+          <h2 class="text-lg font-semibold">Uploaded Files</h2>
+          <button
+            onclick="loadDocuments()"
+            class="text-sm text-indigo-600 hover:underline"
+          >
+            Refresh
+          </button>
+        </div>
+        <ul id="file-list" class="space-y-1 text-sm text-gray-700 max-h-48 overflow-y-auto">
+          <li class="italic text-gray-500">Loading…</li>
+        </ul>
+      </section>
+
+      <!-- Chat History -->
+      <section class="flex-1 flex flex-col">
+        <div class="flex justify-between items-center mb-2">
+          <h2 class="text-lg font-semibold">Chat History</h2>
+          <button
+            onclick="clearHistory()"
+            class="text-sm text-yellow-600 hover:underline"
+          >
+            Clear
+          </button>
+        </div>
+        <ul id="chat-history" class="flex-1 overflow-y-auto text-sm space-y-1 p-2 bg-gray-50 rounded">
+          <li class="italic text-gray-500">No chat yet.</li>
         </ul>
       </section>
     </aside>
@@ -42,7 +66,7 @@
       </div>
 
       <!-- Ask Question -->
-      <div class="bg-white p-6 shadow rounded-lg">
+      <div class="bg-white p-6 shadow rounded-lg relative">
         <h2 class="font-semibold mb-2">Ask a Question</h2>
         <input
           type="text"
@@ -50,12 +74,20 @@
           placeholder="Type your question…"
           class="border p-2 rounded w-full"
         />
+
         <button
+          id="ask-btn"
           onclick="askQuestion()"
-          class="mt-2 bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
+          class="mt-2 bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 flex items-center"
         >
-          Get Answer
+          <svg id="spinner" class="animate-spin -ml-1 mr-2 h-5 w-5 text-white hidden"
+               xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+          </svg>
+          <span id="ask-label">Get Answer</span>
         </button>
+
         <div id="answer-box" class="mt-4 hidden bg-green-50 border-l-4 border-green-400 p-4 text-green-700 rounded">
           <strong>Answer:</strong>
           <p id="answer-text" class="mt-1"></p>
@@ -66,20 +98,31 @@
   </div>
 
   <script>
+    let chatHistory = []
+
     // Load list of uploaded documents
     async function loadDocuments() {
       const list = document.getElementById('file-list')
-      list.innerHTML = ''
+      list.innerHTML = '<li class="italic text-gray-500">Loading…</li>'
       try {
         const res = await fetch('/api/metadata')
         const docs = await res.json()
+        if (!docs.length) {
+          list.innerHTML = '<li class="italic text-gray-500">No files uploaded.</li>'
+          return
+        }
+        list.innerHTML = ''
         docs.forEach(d => {
           const li = document.createElement('li')
-          li.textContent = d.filename
+          li.className = 'flex justify-between items-center'
+          li.innerHTML = `
+            <span>${d.filename}</span>
+            <button onclick="removeDocument(${d.id})" class="text-red-500 hover:text-red-700 text-xs">Remove</button>
+          `
           list.appendChild(li)
         })
       } catch (err) {
-        list.innerHTML = '<li class="text-red-500">Error loading files.</li>'
+        list.innerHTML = '<li class="italic text-red-500">Error loading files.</li>'
       }
     }
 
@@ -109,14 +152,37 @@
       }
     }
 
-    // Ask the LLM a question
+    // Remove a document
+    async function removeDocument(docId) {
+      if (!confirm('Remove this document?')) return
+      try {
+        const res = await fetch(`/api/metadata/${docId}`, { method: 'DELETE' })
+        if (res.ok) {
+          loadDocuments()
+        } else {
+          alert('Failed to remove.')
+        }
+      } catch {
+        alert('Error removing document.')
+      }
+    }
+
+    // Ask the LLM a question (with spinner)
     async function askQuestion() {
       const qin = document.getElementById('question-input')
       const ansBox = document.getElementById('answer-box')
       const ansText = document.getElementById('answer-text')
+      const spinner = document.getElementById('spinner')
+      const askBtn = document.getElementById('ask-btn')
+      const askLabel = document.getElementById('ask-label')
 
       const question = qin.value.trim()
       if (!question) return
+
+      // Show spinner, disable button
+      spinner.classList.remove('hidden')
+      askLabel.textContent = 'Processing...'
+      askBtn.disabled = true
 
       try {
         const res = await fetch('/api/query', {
@@ -130,15 +196,49 @@
         ansText.textContent = answer
         ansBox.classList.remove('hidden')
 
+        // Update chat history
+        chatHistory.push({ sender: 'You', content: question })
+        chatHistory.push({ sender: 'AI', content: answer })
+        renderChat()
+
         qin.value = ''
       } catch (err) {
         alert('Error getting answer.')
+      } finally {
+        // Hide spinner, re-enable button
+        spinner.classList.add('hidden')
+        askLabel.textContent = 'Get Answer'
+        askBtn.disabled = false
       }
     }
 
-    // Initial load
+    // Render chat history in sidebar
+    function renderChat() {
+      const ul = document.getElementById('chat-history')
+      ul.innerHTML = ''
+      if (!chatHistory.length) {
+        ul.innerHTML = '<li class="italic text-gray-500">No chat yet.</li>'
+        return
+      }
+      chatHistory.forEach(turn => {
+        const li = document.createElement('li')
+        li.innerHTML = `<span class="font-semibold">[${turn.sender}]</span> ${turn.content}`
+        ul.appendChild(li)
+      })
+      ul.scrollTop = ul.scrollHeight
+    }
+
+    // Clear client-side chat history
+    function clearHistory() {
+      chatHistory = []
+      renderChat()
+      document.getElementById('answer-box').classList.add('hidden')
+    }
+
+    // Initial load of docs and chat
     window.addEventListener('DOMContentLoaded', () => {
       loadDocuments()
+      renderChat()
     })
   </script>
 
